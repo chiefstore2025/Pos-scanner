@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>POS v6 — Final</title>
+<style>
+:root{--accent:#0ea5a4;--muted:#64748b;--bg:#f7fafc}
+body{font-family:Arial,Helvetica,sans-serif;margin:0;background:var(--bg);color:#0b1220}
+.header{background:linear-gradient(90deg,#06b6d4,#0891b2);color:#fff;padding:12px 16px;display:flex;justify-content:space-between}
+.container{display:flex;gap:12px;padding:12px}
+.col{background:#fff;padding:12px;border-radius:8px}
+.left{flex:1;min-width:320px}.right{width:420px}
+input,select,button{padding:8px;border-radius:6px;border:1px solid #e6eef2}
+.btn{background:var(--accent);color:#fff;border:0;padding:8px 10px;border-radius:6px;cursor:pointer}
+.alt{background:#334155}
+.small{font-size:13px;color:var(--muted)}
+.product{border:1px dashed #e2e8f0;padding:8px;border-radius:6px;margin-bottom:8px}
+.table{width:100%;border-collapse:collapse}
+.table th,.table td{padding:6px;border-bottom:1px solid #eef2f7}
+.receipt{font-family:monospace;white-space:pre-wrap;border:1px dashed #cbd5e1;padding:8px}
+.notice{background:#fff3bf;padding:8px;border-radius:6px;color:#92400e;margin-bottom:8px}
+.footer{padding:12px;text-align:center;color:#94a3b8}
+@media(max-width:900px){.container{flex-direction:column}.right{width:auto}}
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <strong>POS v6 — Final</strong>
+    <div class="small">Scanner • Inventory • Cart • Offline</div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <button class="btn" id="exportAll">Export CSV</button>
+  </div>
+</div>
+
+<div style="padding:12px" id="topNotice"></div>
+
+<div class="container">
+  <div class="col left">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div><strong>Products</strong><div class="small">Search / scan / add</div></div>
+      <div><button class="btn" id="loadSample">Load sample</button></div>
+    </div>
+
+    <div style="margin-top:8px;display:flex;gap:8px">
+      <input id="search" placeholder="Search name or barcode" style="flex:1"/>
+      <select id="markupQuick"><option value="">Markup</option><option value="10">10%</option><option value="15">15%</option><option value="20">20%</option></select>
+    </div>
+
+    <div style="margin-top:8px;display:flex;gap:8px">
+      <input id="barcodeInput" placeholder="Barcode / scan result"/>
+      <button class="btn" id="addFromScan">Use</button>
+    </div>
+
+    <div id="productGrid" style="margin-top:8px" class="product-grid"></div>
+
+    <hr/>
+
+    <div><strong>Cart</strong><div class="small">Edit qty in cart</div></div>
+    <table class="table" id="cartTable"><thead><tr><th>Item</th><th style="width:70px">Qty</th><th style="width:100px">Unit</th><th style="width:100px">Total</th><th></th></tr></thead><tbody></tbody></table>
+
+    <div style="display:flex;justify-content:space-between;margin-top:8px"><div class="small">Subtotal</div><div id="subtotal" style="font-weight:700">₱0.00</div></div>
+
+    <div style="margin-top:8px;display:flex;gap:8px">
+      <select id="payMethod"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="maya">Maya</option></select>
+      <input id="paidAmount" placeholder="Paid amount" style="width:140px"/>
+      <button class="btn" id="btnPay">Pay & Save</button>
+      <button class="btn alt" id="btnPrint">Print</button>
+    </div>
+  </div>
+
+  <div class="col right">
+    <div><strong>Scanner</strong><div class="small">Camera scan (BarcodeDetector preferred — jsQR fallback)</div></div>
+    <video id="video" autoplay playsinline style="width:100%;height:220px;background:#000;border-radius:6px;border:1px solid #ddd"></video>
+
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn" id="startScan">Start</button>
+      <button class="btn alt" id="stopScan">Stop</button>
+      <button class="btn" id="clearScan">Clear</button>
+    </div>
+
+    <p class="small" style="margin-top:8px">Detected: <span id="detected">—</span></p>
+
+    <hr/>
+    <div><strong>Auto-fill Product</strong></div>
+    <div style="margin-top:8px">
+      <label class="small">Barcode</label><input id="p_barcode" readonly/>
+      <label class="small">Name</label><input id="p_name"/>
+      <label class="small">Category</label><input id="p_cat"/>
+      <label class="small">Cost</label><input id="p_cost" type="number"/>
+      <label class="small">Markup %</label>
+      <select id="p_markup"><option>10</option><option>15</option><option>20</option></select>
+      <label class="small">Price</label><input id="p_price" readonly/>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn" id="saveProduct">Save product</button>
+        <button class="btn" id="stockIn">Stock In</button>
+        <button class="btn" id="stockOut">Stock Out</button>
+      </div>
+      <p id="saveMsg" class="small"></p>
+    </div>
+
+    <hr/>
+    <div><strong>Receipt Preview</strong></div>
+    <pre id="receiptPreview" class="receipt">No receipt</pre>
+
+    <hr/>
+    <div><strong>Reports & Queue</strong></div>
+    <div style="margin-top:8px">
+      <label class="small">Select date</label>
+      <input type="date" id="reportDate" style="width:100%"/>
+      <div style="margin-top:8px"><button class="btn" id="btnShowReport">Show Report</button></div>
+      <div id="reportList" style="margin-top:8px"></div>
+      <pre id="queueView" class="small" style="max-height:150px;overflow:auto;margin-top:8px"></pre>
+    </div>
+  </div>
+</div>
+
+<div class="footer">Open with Chrome. For phone camera: use GitHub Pages (HTTPS) or Simple HTTP Server app to serve locally.</div>
+
+<!-- jsQR fallback -->
+<script src="https://unpkg.com/jsqr/dist/jsQR.js"></script>
+
+<script>
+/* --- Utilities --- */
+const fmt = n => '₱' + Number(n||0).toFixed(2);
+const gid = id => document.getElementById(id);
+
+/* --- Storage keys --- */
+const PKEY='pos_v6_products', TKEY='pos_v6_txs', CKEY='pos_v6_cart', QKEY='pos_v6_queue';
+
+/* --- Show notice when opened file:// (Chrome Android blocks camera) --- */
+function checkFileProtocol(){
+  const notice = gid('topNotice');
+  if(location.protocol === 'file:'){
+    notice.innerHTML = '<div class="notice"><strong>Important:</strong> Opening as <code>file://</code> may block camera on Chrome Android. Use GitHub Pages (recommended) or a local HTTP server app (Simple HTTP Server) to allow camera access.</div>';
+  } else notice.innerHTML='';
+}
+checkFileProtocol();
+
+/* --- Products DB --- */
+function loadProducts(){ try{return JSON.parse(localStorage.getItem(PKEY))||[];}catch(e){return[]} }
+function saveProducts(db){ localStorage.setItem(PKEY, JSON.stringify(db)); renderProducts(); renderQueueView(); }
+function findByBarcode(code){ return loadProducts().find(p=>p.barcode===code||p.id===code) }
+
+/* --- Render products --- */
+function renderProducts(filter=''){
+  const grid=gid('productGrid'); grid.innerHTML='';
+  const db=loadProducts();
+  const list = db.filter(p=> (p.name||'').toLowerCase().includes(filter.toLowerCase()) || (p.barcode||'').includes(filter));
+  list.forEach(p=>{
+    const el=document.createElement('div'); el.className='product';
+    el.innerHTML = `<div style="display:flex;justify-content:space-between"><strong>${p.name}</strong><div class="small">${p.category||''}</div></div>
+      <div class="small">Stock: ${p.qty||0} · Cost: ${fmt(p.cost)} · Price: ${fmt(p.price)}</div>
+      <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:6px"><button class="btn" data-id="${p.barcode||p.id}">Add</button><button class="btn alt" data-edit="${p.barcode||p.id}">Edit</button></div>`;
+    grid.appendChild(el);
+  });
+  grid.querySelectorAll('button[data-id]').forEach(b=>b.addEventListener('click', e=> addToCart(e.target.dataset.id)));
+  grid.querySelectorAll('button[data-edit]').forEach(b=>b.addEventListener('click', e=> editByBarcode(e.target.dataset.edit)));
+}
+
+/* --- Search / quick handlers --- */
+gid('search').addEventListener('input', e=> renderProducts(e.target.value));
+gid('markupQuick').addEventListener('change', ()=>{});
+
+/* --- Save product from form --- */
+function saveProductFromForm(){
+  const barcode = gid('p_barcode').value || ('P'+Date.now().toString(36));
+  const name = gid('p_name').value.trim();
+  if(!name) return alert('Name required');
+  const category = gid('p_cat').value || 'Others';
+  const cost = parseFloat(gid('p_cost').value) || 0;
+  const markup = parseFloat(gid('p_markup').value) || 0;
+  const price = parseFloat(gid('p_price').value) || parseFloat((cost * (1 + markup/100)).toFixed(2)) || 0;
+  const db = loadProducts();
+  const idx = db.findIndex(x=> x.barcode===barcode || x.id===barcode);
+  const obj = { id: 'P'+Date.now().toString(36), barcode, name, category, cost, markup, price, qty: (db[idx] && db[idx].qty) || 0, created: Date.now() };
+  if(idx>=0) db[idx] = Object.assign(db[idx], obj); else db.push(obj);
+  saveProducts(db);
+  gid('saveMsg').textContent = 'Saved'; setTimeout(()=>gid('saveMsg').textContent='',1400);
+}
+gid('saveProduct').addEventListener('click', saveProductFromForm);
+
+/* --- Stock in/out --- */
+gid('stockIn').addEventListener('click', ()=>{ const code=gid('p_barcode').value; const db=loadProducts(); const p=db.find(x=>x.barcode===code||x.id===code); if(!p) return alert('No product'); p.qty=(p.qty||0)+1; saveProducts(db); renderProducts(); });
+gid('stockOut').addEventListener('click', ()=>{ const code=gid('p_barcode').value; const db=loadProducts(); const p=db.find(x=>x.barcode===code||x.id===code); if(!p) return alert('No product'); p.qty=Math.max(0,(p.qty||0)-1); saveProducts(db); renderProducts(); });
+
+/* --- Edit by barcode --- */
+function editByBarcode(code){ const p=findByBarcode(code); if(!p) return alert('Not found'); gid('p_barcode').value=p.barcode||p.id; gid('p_name').value=p.name; gid('p_cat').value=p.category; gid('p_cost').value=p.cost; gid('p_markup').value=p.markup; gid('p_price').value=p.price; }
+
+/* --- Cart functions --- */
+function loadCart(){ try{return JSON.parse(localStorage.getItem(CKEY))||[];}catch(e){return[]} }
+function saveCart(c){ localStorage.setItem(CKEY, JSON.stringify(c)); renderCart(); }
+function addToCart(code){
+  const p = findByBarcode(code);
+  if(!p){ alert('Product not found'); return; }
+  const cart = loadCart(); const ex = cart.find(i=>i.code === (p.barcode || p.id));
+  if(ex) ex.qty += 1; else cart.push({ code: p.barcode || p.id, name: p.name, price: p.price, qty: 1, cost: p.cost || 0 });
+  saveCart(cart);
+}
+function renderCart(){
+  const tbody = gid('cartTable').querySelector('tbody'); tbody.innerHTML = '';
+  const cart = loadCart(); let subtotal = 0;
+  cart.forEach((it, idx)=>{
+    const total = it.qty * it.price; subtotal += total;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${it.name}</td><td><input class="qty" data-idx="${idx}" value="${it.qty}" style="width:56px"/></td><td>${fmt(it.price)}</td><td>${fmt(total)}</td><td><button data-idx="${idx}" class="btn">x</button></td>`;
+    tbody.appendChild(tr);
+  });
+  gid('subtotal').textContent = fmt(subtotal);
+  document.querySelectorAll('.qty').forEach(inp=>inp.addEventListener('change', e=>{ const i=+e.target.dataset.idx; const cart=loadCart(); cart[i].qty = Math.max(1, parseInt(e.target.value)||1); saveCart(cart); }));
+  document.querySelectorAll('button.btn').forEach(b=>b.addEventListener('click', e=>{ const i=+b.dataset.idx; const cart=loadCart(); cart.splice(i,1); saveCart(cart); }));
+}
+
+/* --- Pay & Save --- */
+gid('btnPay').addEventListener('click', ()=>{
+  const cart = loadCart(); if(cart.length===0) return alert('Cart empty');
+  const method = gid('payMethod').value; const paid = parseFloat(gid('paidAmount').value) || 0;
+  const subtotal = cart.reduce((s,i)=> s + i.qty * i.price, 0);
+  if(method==='cash' && paid < subtotal && !confirm('Paid less than total. Continue?')) return;
+  const tx = { id: 'TX' + Date.now(), date: new Date().toISOString(), items: cart, subtotal, method, paid };
+  const txs = JSON.parse(localStorage.getItem(TKEY) || '[]'); txs.push(tx); localStorage.setItem(TKEY, JSON.stringify(txs));
+  const db = loadProducts(); cart.forEach(it => { const p = db.find(x => x.barcode === it.code || x.id === it.code); if(p) p.qty = Math.max(0, (p.qty||0) - it.qty); });
+  saveProducts(db);
+  saveQueueAppend(tx);
+  saveCart([]);
+  renderProducts(gid('search').value);
+  renderReceiptPreview(tx);
+  alert('Transaction saved');
+  gid('paidAmount').value = '';
+});
+
+/* --- Queue (for backup/export to sheet) --- */
+function saveQueueAppend(tx){ const q = loadQueue(); tx.items.forEach(item => q.push([tx.id, tx.date, item.name, item.qty, item.price, tx.method])); localStorage.setItem(QKEY, JSON.stringify(q)); renderQueueView(); }
+function loadQueue(){ try{return JSON.parse(localStorage.getItem(QKEY))||[];}catch(e){return[]} }
+function renderQueueView(){ gid('queueView').textContent = JSON.stringify(loadQueue(), null, 2); }
+
+/* --- Receipt & Print --- */
+function renderReceiptPreview(tx){
+  let txt=''; const d=new Date(tx.date);
+  txt += '      STORE RECEIPT\\n';
+  txt += '------------------------------\\n';
+  txt += d.toLocaleString() + '\\n';
+  txt += '------------------------------\\n';
+  tx.items.forEach(i => txt += `${i.name} x${i.qty}`.padEnd(22) + ((i.price*i.qty).toFixed(2)).padStart(8) + '\\n');
+  txt += '------------------------------\\n';
+  txt += 'TOTAL:'.padEnd(22) + fmt(tx.subtotal).padStart(8) + '\\n';
+  if(tx.paid){ txt += 'PAID:'.padEnd(22) + fmt(tx.paid).padStart(8) + '\\n'; txt += 'CHANGE:'.padEnd(22) + fmt(tx.paid - tx.subtotal).padStart(8) + '\\n'; }
+  txt += '\\nThank you!\\n';
+  gid('receiptPreview').textContent = txt;
+  const w = window.open('', '_blank', 'width=320,height=480'); w.document.write('<pre style="font-family:monospace">'+txt+'</pre>'); w.document.close(); w.print();
+}
+
+/* --- Export CSV --- */
+gid('exportAll').addEventListener('click', ()=>{ const csv = inventoryToCSV(); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download = 'inventory_export.csv'; a.click(); });
+function inventoryToCSV(){ const db=loadProducts(); const rows=[['barcode','name','category','qty','cost','markup','price']].concat(db.map(i=>[i.barcode||'',i.name||'',i.category||'',i.qty||0,i.cost||'',i.markup||'',i.price||''])); return rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\\n'); }
+
+/* --- Load sample --- */
+gid('loadSample').addEventListener('click', ()=>{ if(!confirm('Load sample items?')) return; const sample=[{id:'P1',barcode:'RH001',name:'Red Horse',category:'Beverages',qty:20,cost:75,markup:15,price:95},{id:'P2',barcode:'YS001',name:'Yosi Stick',category:'Snacks',qty:50,cost:5,markup:20,price:6},{id:'P3',barcode:'IN001',name:'Instant Noodles',category:'Noodles',qty:40,cost:10,markup:20,price:12}]; saveProducts(sample); renderProducts(); alert('Sample loaded'); });
+
+/* --- Scanner: BarcodeDetector (pref) -> jsQR fallback --- */
+let stream=null, scanning=false;
+async function startScan(){
+  if(scanning) return;
+  const video = gid('video');
+  try{
+    if(window.BarcodeDetector){
+      const detector = new BarcodeDetector({formats:['ean_13','code_128','qr_code','upc_a','upc_e','ean_8']});
+      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+      video.srcObject = stream; video.play(); scanning=true;
+      (async function loop(){ if(!scanning) return; try{ const barcodes = await detector.detect(video); if(barcodes && barcodes.length){ onScan(barcodes[0].rawValue); stopScan(); return; } }catch(e){} requestAnimationFrame(loop); })();
+      return;
+    }
+  }catch(e){ console.warn('BarcodeDetector error', e); }
+  // fallback jsQR
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    video.srcObject = stream; video.play(); scanning=true; scanFrame();
+  }catch(err){
+    alert('Camera error: '+(err.message||err)+'. If opening from file:// and camera is blocked, serve via local HTTP server or use GitHub Pages (HTTPS).');
+  }
+}
+function stopScan(){ scanning=false; if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } }
+function clearScan(){ gid('detected').textContent='—'; gid('barcodeInput').value=''; gid('p_barcode').value=''; gid('p_name').value=''; gid('p_cat').value=''; gid('p_cost').value=''; gid('p_price').value=''; gid('saveMsg').textContent=''; }
+
+function scanFrame(){
+  if(!scanning) return;
+  const video = gid('video');
+  if(video.readyState === video.HAVE_ENOUGH_DATA){
+    const w = video.videoWidth, h = video.videoHeight;
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d'); ctx.drawImage(video,0,0,w,h);
+    const img = ctx.getImageData(0,0,w,h);
+    try{
+      const code = jsQR(img.data, w, h);
+      if(code && code.data){ onScan(code.data); stopScan(); return; }
+    }catch(e){}
+  }
+  requestAnimationFrame(scanFrame);
+}
+
+function onScan(text){
+  gid('detected').textContent = text; gid('barcodeInput').value = text;
+  const found = findByBarcode(text);
+  if(found){ fillForm(found); gid('saveMsg').textContent = 'Found in DB — auto-filled'; } 
+  else { fillForm({barcode:text,name:'Scanned '+text,category:'Others',cost:0,markup:10,price:0}); gid('saveMsg').textContent = 'Not found — auto-filled'; }
+  playBeep();
+}
+
+function playBeep(){ try{ const ctx=new (window.AudioContext||window.webkitAudioContext)(); const o=ctx.createOscillator(); const g=ctx.createGain(); o.type='sine'; o.frequency.value=1000; o.connect(g); g.connect(ctx.destination); g.gain.value=0.001; o.start(); g.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime+0.12); setTimeout(()=>{ o.stop(); ctx.close(); },150); }catch(e){} }
+
+/* --- Add from scan button --- */
+gid('addFromScan').addEventListener('click', ()=>{ const code = gid('barcodeInput').value.trim(); if(!code) return alert('No barcode'); const p = findByBarcode(code); if(p){ gid('p_barcode').value=p.barcode||p.id; gid('p_name').value=p.name; gid('p_cat').value=p.category; gid('p_cost').value=p.cost; gid('p_price').value=p.price; } else { gid('p_barcode').value=code; gid('p_name').value='Scanned '+code; gid('p_cat').value='Others'; } });
+
+/* --- Export/Import helpers --- */
+function downloadCSV(text, filename){ const a=document.createElement('a'); a.href = URL.createObjectURL(new Blob([text],{type:'text/csv'})); a.download = filename; a.click(); }
+
+/* --- Reports --- */
+gid('btnShowReport').addEventListener('click', ()=>{ const d = gid('reportDate').value; if(!d) return alert('Choose date'); const txs = JSON.parse(localStorage.getItem(TKEY)||'[]').filter(t=>t.date.slice(0,10)===d); const list = gid('reportList'); list.innerHTML=''; if(txs.length===0){ list.textContent='No transactions for this date.'; return; } txs.forEach(t=>{ const div=document.createElement('div'); div.innerHTML = `<div><strong>${t.id}</strong> ${new Date(t.date).toLocaleString()} - ${fmt(t.subtotal)}</div>`; list.appendChild(div); }); });
+
+/* --- Fill helpers --- */
+function fillForm(obj){ gid('p_barcode').value = obj.barcode||''; gid('p_name').value = obj.name||''; gid('p_cat').value = obj.category||''; gid('p_cost').value = obj.cost||''; gid('p_markup').value = obj.markup||10; gid('p_price').value = obj.price||''; }
+
+/* --- Init --- */
+(function init(){
+  if(!localStorage.getItem(PKEY)) saveProducts([]);
+  if(!localStorage.getItem(TKEY)) localStorage.setItem(TKEY, JSON.stringify([]));
+  renderProducts(); renderCart(); gid('reportDate').value = new Date().toISOString().slice(0,10); renderQueueView(); checkFileProtocol();
+})();
+
+/* --- Expose helpful functions for debugging in console --- */
+window._pos_v6 = { loadProducts, saveProducts, addToCart, renderCart, inventoryToCSV: inventoryToCSV, loadQueue };
+</script>
+</body>
+</html>
