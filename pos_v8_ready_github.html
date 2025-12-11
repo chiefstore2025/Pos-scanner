@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
+<title>POS Scanner V8 Ready GitHub</title>
+<style>
+body { font-family: Arial; padding:10px; background:#f1f1f1; }
+.card { background:white; padding:12px; border-radius:8px; margin-bottom:12px; }
+input,select,button { width:100%; padding:8px; margin-top:6px; }
+button { background:#0a7cff; color:white; border:none; border-radius:6px; }
+#preview { width:100%; background:black; border-radius:6px; }
+</style>
+</head>
+
+<body>
+<h2>POS Scanner V8 (Back Camera + Auto-Fill)</h2>
+
+<div class='card'>
+  <label>Piliin Camera</label>
+  <select id='cameraSelect'></select>
+  <button onclick='startScanner()'>Start Scanner</button>
+  <video id='preview' autoplay playsinline></video>
+  <div id='log'></div>
+</div>
+
+<div class='card'>
+  <h3>Add Product</h3>
+  <label>Barcode</label><input id='barcode'>
+  <label>Name</label><input id='name'>
+  <label>Category</label><input id='category'>
+  <label>Cost</label><input id='cost' type='number'>
+  <label>Markup</label>
+  <select id='markup'><option value='10'>10%</option><option value='15'>15%</option><option value='20'>20%</option></select>
+  <label>Price</label><input id='price' readonly>
+  <button onclick='saveProduct()'>Save Product</button>
+</div>
+
+<div class='card'>
+  <h3>Saved Products</h3>
+  <div id='productList'></div>
+</div>
+
+<script>
+async function loadCameras(){
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cams = devices.filter(d=>d.kind==='videoinput');
+  let sel = document.getElementById('cameraSelect');
+  sel.innerHTML='';
+  cams.forEach((c,i)=>{
+    let o=document.createElement('option');
+    o.value=c.deviceId; o.textContent=c.label||'Camera '+(i+1);
+    sel.appendChild(o);
+  });
+}
+loadCameras();
+
+let stream;
+async function startScanner(){
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); }
+  let camID=document.getElementById('cameraSelect').value;
+  stream=await navigator.mediaDevices.getUserMedia({video:{deviceId:camID}});
+  document.getElementById('preview').srcObject=stream;
+  scanBarcode();
+}
+
+async function scanBarcode(){
+  const video=document.getElementById('preview');
+  if('BarcodeDetector' in window){
+    const det=new BarcodeDetector({formats:['ean_13','qr_code','code_128']});
+    setInterval(async()=>{
+      try{
+        let b=await det.detect(video);
+        if(b.length>0){
+          let code=b[0].rawValue;
+          document.getElementById('barcode').value=code;
+          autoFill(code);
+        }
+      }catch(e){}
+    },600);
+  }
+}
+
+const autoDB={
+  "4807770270017":{name:"Nissin Cup Noodles",category:"Noodles",cost:23},
+  "4800361400010":{name:"Cobra Energy Drink",category:"Drinks",cost:17},
+  "4800016550015":{name:"Lucky Me Pancit Canton",category:"Noodles",cost:14}
+};
+
+function autoFill(code){
+  if(autoDB[code]){
+    let p=autoDB[code];
+    document.getElementById('name').value=p.name;
+    document.getElementById('category').value=p.category;
+    document.getElementById('cost').value=p.cost;
+    updatePrice();
+  }
+}
+
+document.getElementById('cost').addEventListener('input',updatePrice);
+document.getElementById('markup').addEventListener('change',updatePrice);
+
+function updatePrice(){
+  let cost=parseFloat(document.getElementById('cost').value||0);
+  let m=parseInt(document.getElementById('markup').value);
+  document.getElementById('price').value=(cost+(cost*m/100)).toFixed(2);
+}
+
+function saveProduct(){
+  let p={
+    barcode:barcode.value,
+    name:name.value,
+    category:category.value,
+    cost:cost.value,
+    price:price.value
+  };
+  let list=JSON.parse(localStorage.getItem('products')||'[]');
+  list.push(p);
+  localStorage.setItem('products',JSON.stringify(list));
+  showProducts();
+}
+
+function showProducts(){
+  let list=JSON.parse(localStorage.getItem('products')||'[]');
+  let out='';
+  list.forEach(p=>{
+    out+=`<div class='card'>
+            <b>${p.name}</b><br>
+            Barcode: ${p.barcode}<br>
+            Category: ${p.category}<br>
+            Cost: ₱${p.cost}<br>
+            Price: ₱${p.price}
+          </div>`;
+  });
+  document.getElementById('productList').innerHTML=out;
+}
+showProducts();
+</script>
+
+</body>
+</html>
