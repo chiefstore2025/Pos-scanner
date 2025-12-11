@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>POS V9 — Backcam + Scanner + Auto-fill (Ready)</title>
+<style>
+  :root{--accent:#0ea5a4;--muted:#64748b;--bg:#f7fafc}
+  body{font-family:Inter,Arial,sans-serif;margin:0;background:var(--bg);color:#0b1220}
+  .wrap{max-width:980px;margin:12px auto;padding:12px}
+  .card{background:#fff;border-radius:10px;padding:12px;margin-bottom:12px;box-shadow:0 1px 4px rgba(2,6,23,.06)}
+  h1{margin:4px 0 8px;font-size:18px}
+  label{display:block;margin-top:8px;font-weight:600}
+  input,select,button,textarea{padding:8px;border-radius:8px;border:1px solid #e6eef2;font-size:14px}
+  .row{display:flex;gap:8px;align-items:center}
+  .scanner{width:100%;height:280px;background:#000;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center}
+  video{width:100%;height:100%;object-fit:cover}
+  .small{font-size:13px;color:var(--muted)}
+  .btn{background:var(--accent);color:#fff;border:0;padding:8px 10px;border-radius:8px;cursor:pointer}
+  .btn.alt{background:#334155}
+  .muted{color:var(--muted)}
+  pre{background:#f3f6f8;padding:8px;border-radius:6px;overflow:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>POS V9 — Scanner + Auto-fill (Ready to Upload)</h1>
+
+  <div class="card">
+    <strong>Scanner (Back camera preferred)</strong>
+    <div id="scanner" class="scanner">
+      <video id="video" autoplay playsinline></video>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <select id="cameraList"></select>
+      <button id="btnStart" class="btn">Start</button>
+      <button id="btnStop" class="btn alt">Stop</button>
+      <button id="btnSwitch" class="btn">Switch</button>
+      <input type="file" id="imgFile" accept="image/*" style="margin-left:8px"/>
+      <div style="margin-left:auto" class="small">Detected: <strong id="detected">—</strong></div>
+    </div>
+    <div class="small muted" id="scanNote">Will try built-in BarcodeDetector first, then ZXing fallback.</div>
+  </div>
+
+  <div class="card">
+    <strong>Add Product (auto-fill on scan)</strong>
+    <div class="row">
+      <div style="flex:1">
+        <label>Barcode</label><input id="p_barcode" placeholder="Scan or type barcode" />
+        <label>Product Name</label><input id="p_name" />
+        <label>Category</label><input id="p_cat" />
+      </div>
+      <div style="width:220px">
+        <label>Cost (₱)</label><input id="p_cost" type="number" step="0.01" />
+        <label>Markup %</label><input id="p_markup" type="number" value="10" />
+        <label>Selling Price</label><input id="p_price" readonly />
+        <label>Stock</label><input id="p_qty" type="number" value="0" />
+      </div>
+    </div>
+    <div style="margin-top:8px" class="row">
+      <button id="saveProd" class="btn">Save Product</button>
+      <button id="importCSV" class="btn alt">Import CSV</button>
+      <input type="file" id="csvFile" accept=".csv" style="display:none" />
+      <button id="useSheet" class="btn">Load from Google Sheet</button>
+      <input id="sheetURL" placeholder="Google Sheet CSV publish URL (optional)" style="flex:1" />
+    </div>
+    <div class="small muted" id="prodNote">Tip: Paste a Google Sheet "Publish to web" CSV URL and click Load.</div>
+  </div>
+
+  <div class="card">
+    <strong>Product DB (click Detected to autofill)</strong>
+    <div class="small muted">You can use local DB (embedded), import CSV, or load from Google Sheet.</div>
+    <div style="margin-top:8px"><button id="exportCSV" class="btn">Export CSV</button></div>
+    <pre id="dbPreview"></pre>
+  </div>
+
+  <div class="card">
+    <strong>Logs</strong>
+    <pre id="log" style="height:140px"></pre>
+  </div>
+
+</div>
+
+<!-- ZXing fallback -->
+<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
+<script>
+/* POS V9 script: back camera preferred, camera switch, BarcodeDetector + ZXing fallback, auto-fill DB */
+const video = document.getElementById('video');
+const cameraList = document.getElementById('cameraList');
+const btnStart = document.getElementById('btnStart');
+const btnStop = document.getElementById('btnStop');
+const btnSwitch = document.getElementById('btnSwitch');
+const imgFile = document.getElementById('imgFile');
+const detectedEl = document.getElementById('detected');
+const logEl = document.getElementById('log');
+const dbPreview = document.getElementById('dbPreview');
+
+let stream = null;
+let currentDeviceId = null;
+let devices = [];
+let scanning = false;
+let lastDetected = null;
+let useZXing = false;
+let codeReader = null;
+
+// embedded demo DB (can be replaced by CSV or Google Sheet)
+let productDB = [
+  {barcode:"8906000000012", name:"Nescafe Creamy White", category:"Drinks", cost:10, price:12, qty:20},
+  {barcode:"1234567890128", name:"Lucky Me Pancit Canton", category:"Instant", cost:12, price:15, qty:30},
+  {barcode:"4899876543210", name:"Cola 330ml", category:"Drinks", cost:8, price:10, qty:50},
+  {barcode:"9780201379624", name:"Notebook A5", category:"Stationery", cost:25, price:35, qty:10},
+  {barcode:"7702010012345", name:"Toothpaste 50g", category:"Personal Care", cost:20, price:30, qty:25},
+  {barcode:"5000112548167", name:"Detergent 1kg", category:"Household", cost:40, price:55, qty:12},
+];
+
+function log(msg){ const s = new Date().toLocaleTimeString() + ' - ' + msg + "\n"; logEl.textContent += s; logEl.scrollTop = logEl.scrollHeight; }
+function renderDB(){ dbPreview.textContent = productDB.map(p=>`${p.barcode} | ${p.name} | ₱${p.price} | stock:${p.qty}`).join('\n'); }
+
+// enumerate cameras and prefer back
+async function enumerateCameras(){
+  try{
+    const list = await navigator.mediaDevices.enumerateDevices();
+    devices = list.filter(d=>d.kind==='videoinput');
+    cameraList.innerHTML = '';
+    devices.forEach(d=>{
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.label || d.deviceId;
+      cameraList.appendChild(opt);
+    });
+    // try to pick environment/back camera by label heuristics
+    const back = devices.find(d=>/back|rear|environment|secondary/i.test(d.label));
+    if(back) { cameraList.value = back.deviceId; currentDeviceId = back.deviceId; }
+    else if(devices.length) { cameraList.value = devices[0].deviceId; currentDeviceId = devices[0].deviceId; }
+  }catch(e){ log('enumerate error: '+e); }
+}
+
+// start camera with preferred device
+async function startCamera(deviceId){
+  stopCamera();
+  try{
+    const constraints = { video: { deviceId: deviceId? { exact: deviceId } : undefined, facingMode: { ideal: 'environment' }, width:{ideal:1280}, height:{ideal:720} } , audio:false };
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = stream;
+    scanning = true;
+    lastDetected = null;
+    log('Camera started');
+    // choose detector
+    if('BarcodeDetector' in window){
+      try{
+        const formats = await BarcodeDetector.getSupportedFormats();
+        log('BarcodeDetector formats: ' + formats.join(','));
+        scanWithBarcodeDetector();
+      }catch(e){ log('BarcodeDetector init error: '+e); useZXing = true; startZXing(deviceId); }
+    } else { useZXing = true; startZXing(deviceId); }
+  }catch(err){
+    log('startCamera error: '+err);
+    alert('Camera error: ' + (err && err.message? err.message: err));
+  }
+}
+
+async function stopCamera(){
+  scanning = false;
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; video.srcObject=null; log('Camera stopped'); }
+  if(codeReader && codeReader.reset) try{ codeReader.reset(); }catch(e){}
+}
+
+async function scanWithBarcodeDetector(){
+  const detector = new BarcodeDetector({formats:['ean_13','ean_8','code_128','upc_a','upc_e','qr_code']});
+  const loop = async ()=>{
+    if(!scanning) return;
+    try{
+      const bitmap = await createImageBitmap(video);
+      const results = await detector.detect(bitmap);
+      if(results && results.length){
+        const code = results[0].rawValue;
+        if(code && code !== lastDetected){
+          lastDetected = code;
+          detectedEl.textContent = code;
+          log('Detected (native): '+code);
+          fillFromBarcode(code);
+        }
+      }
+    }catch(e){}
+    requestAnimationFrame(loop);
+  };
+  loop();
+}
+
+function startZXing(deviceId){
+  useZXing = true;
+  try{
+    codeReader = new ZXing.BrowserMultiFormatReader();
+    codeReader.decodeFromVideoDevice(deviceId || null, video, (result, err) => {
+      if(result){
+        const code = result.text;
+        if(code && code !== lastDetected){
+          lastDetected = code;
+          detectedEl.textContent = code;
+          log('Detected (ZXing): '+code);
+          fillFromBarcode(code);
+        }
+      }
+      if(err && !(err instanceof ZXing.NotFoundException)) {
+        // ignore
+      }
+    });
+  }catch(e){ log('ZXing error: '+e); }
+}
+
+// fill form from DB
+function fillFromBarcode(code){
+  const p = productDB.find(x=>x.barcode===code);
+  if(p){
+    document.getElementById('p_barcode').value = p.barcode;
+    document.getElementById('p_name').value = p.name;
+    document.getElementById('p_cat').value = p.category;
+    document.getElementById('p_cost').value = p.cost;
+    document.getElementById('p_price').value = p.price;
+    document.getElementById('p_qty').value = p.qty;
+    log('Auto-filled: '+p.name);
+  } else {
+    log('Barcode not found in DB: '+code);
+  }
+}
+
+// camera switch
+btnStart.addEventListener('click', ()=> startCamera(cameraList.value || currentDeviceId));
+btnStop.addEventListener('click', ()=> stopCamera());
+btnSwitch.addEventListener('click', async ()=>{
+  if(!devices || devices.length<2) return alert('No second camera found');
+  const idx = devices.findIndex(d=>d.deviceId === cameraList.value);
+  const next = devices[(idx+1) % devices.length];
+  cameraList.value = next.deviceId;
+  startCamera(next.deviceId);
+});
+
+// image file fallback
+imgFile.addEventListener('change', (ev)=>{
+  const f = ev.target.files && ev.target.files[0];
+  if(!f) return;
+  const img = new Image();
+  img.onload = async ()=>{
+    const c = document.createElement('canvas'); c.width=img.naturalWidth; c.height=img.naturalHeight;
+    c.getContext('2d').drawImage(img,0,0);
+    try{
+      if('BarcodeDetector' in window){
+        const detector = new BarcodeDetector({formats:['ean_13','code_128','qr_code']});
+        const results = await detector.detect(c);
+        if(results && results.length){ fillFromBarcode(results[0].rawValue); detectedEl.textContent = results[0].rawValue; return; }
+      }
+      const reader = new ZXing.BrowserBarcodeReader();
+      const res = await reader.decodeFromImage(c);
+      if(res && res.text){ fillFromBarcode(res.text); detectedEl.textContent = res.text; return; }
+      alert('No barcode found in image');
+    }catch(e){ alert('Image decode error: '+e); }
+  };
+  img.src = URL.createObjectURL(f);
+});
+
+// product save / export / import
+document.getElementById('saveProd').addEventListener('click', ()=>{
+  const item = {
+    barcode: document.getElementById('p_barcode').value.trim(),
+    name: document.getElementById('p_name').value.trim(),
+    category: document.getElementById('p_cat').value.trim(),
+    cost: parseFloat(document.getElementById('p_cost').value) || 0,
+    price: parseFloat(document.getElementById('p_price').value) || 0,
+    qty: parseInt(document.getElementById('p_qty').value) || 0
+  };
+  if(!item.barcode || !item.name){ return alert('Barcode and name required'); }
+  const exist = productDB.find(x=>x.barcode===item.barcode);
+  if(exist) Object.assign(exist, item); else productDB.push(item);
+  renderDB(); localStorage.setItem('pos_products_v9', JSON.stringify(productDB));
+  alert('Saved');
+});
+
+document.getElementById('exportCSV').addEventListener('click', ()=>{
+  const rows = [['barcode','name','category','cost','price','qty']].concat(productDB.map(p=>[p.barcode,p.name,p.category,p.cost,p.price,p.qty]));
+  const csv = rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='pos_products_v9.csv'; a.click();
+});
+
+document.getElementById('importCSV').addEventListener('click', ()=> document.getElementById('csvFile').click());
+document.getElementById('csvFile').addEventListener('change', (e)=>{
+  const f = e.target.files && e.target.files[0]; if(!f) return;
+  const r = new FileReader(); r.onload = ()=> {
+    const lines = r.result.split(/\r?\n/).filter(Boolean);
+    const out = [];
+    for(let i=1;i<lines.length;i++){
+      const cols = lines[i].split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(s=>s.replace(/^"|"$/g,'').replace(/""/g,'"'));
+      if(cols.length>=6) out.push({barcode:cols[0],name:cols[1],category:cols[2],cost:parseFloat(cols[3])||0,price:parseFloat(cols[4])||0,qty:parseInt(cols[5])||0});
+    }
+    if(out.length){ productDB = out; renderDB(); localStorage.setItem('pos_products_v9', JSON.stringify(productDB)); alert('Imported '+out.length+' products'); }
+    else alert('No valid rows found');
+  }; r.readAsText(f);
+});
+
+// load from Google Sheet CSV publish URL
+document.getElementById('useSheet').addEventListener('click', async ()=>{
+  const url = document.getElementById('sheetURL').value.trim();
+  if(!url) return alert('Paste the published CSV URL from Google Sheets (File → Publish to web → CSV)');
+  try{
+    document.getElementById('scanNote').textContent = 'Loading sheet...';
+    const res = await fetch(url);
+    const text = await res.text();
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    const arr = [];
+    for(let i=1;i<lines.length;i++){
+      const cols = lines[i].split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(s=>s.replace(/^"|"$/g,'').replace(/""/g,'"'));
+      if(cols.length>=6) arr.push({barcode:cols[0],name:cols[1],category:cols[2],cost:parseFloat(cols[3])||0,price:parseFloat(cols[4])||0,qty:parseInt(cols[5])||0});
+    }
+    if(arr.length){ productDB = arr; renderDB(); localStorage.setItem('pos_products_v9', JSON.stringify(productDB)); alert('Loaded sheet: '+arr.length+' products'); } else alert('No valid rows found in sheet');
+  }catch(e){ alert('Failed to load sheet: '+e); }
+});
+
+// restore from localStorage if exists
+(function init(){
+  const stored = localStorage.getItem('pos_products_v9');
+  if(stored) try{ productDB = JSON.parse(stored); }catch(e){}
+  renderDB();
+  enumerateCameras();
+})();
+</script>
+</body>
+</html>
